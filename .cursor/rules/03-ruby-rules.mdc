@@ -1,0 +1,405 @@
+---
+alwaysApply: true
+---
+## 🔧 Ruby 工具类和日志规范
+
+### 统一日志工具类
+```ruby
+# lib/utils/logger.rb
+module Utils
+  class Logger
+    include Singleton
+
+    def initialize
+      @logger = ::Logger.new($stdout)
+      @logger.level = log_level
+      @logger.formatter = proc do |severity, datetime, progname, msg|
+        {
+          timestamp: datetime.iso8601,
+          level: severity,
+          service: service_name,
+          message: msg,
+          trace_id: current_trace_id
+        }.to_json + "\n"
+      end
+    end
+
+    def info(message, **context)
+      log(:info, message, **context)
+    end
+
+    def error(message, error: nil, **context)
+      context[:error] = error_details(error) if error
+      log(:error, message, **context)
+    end
+
+    def warn(message, **context)
+      log(:warn, message, **context)
+    end
+
+    def debug(message, **context)
+      log(:debug, message, **context)
+    end
+
+    private
+
+    def log(level, message, **context)
+      log_data = { message: message }.merge(context)
+      @logger.send(level, log_data.to_json)
+    end
+
+    def error_details(error)
+      {
+        class: error.class.name,
+        message: error.message,
+        backtrace: error.backtrace&.first(10)
+      }
+    end
+
+    def log_level
+      ENV.fetch('LOG_LEVEL', 'info').downcase.to_sym
+    end
+
+    def service_name
+      ENV.fetch('SERVICE_NAME', 'ruby-service')
+    end
+
+    def current_trace_id
+      Thread.current[:trace_id] || SecureRandom.hex(8)
+    end
+  end
+end
+```
+
+### HTTP 客户端工具类
+```ruby
+# lib/utils/http_client.rb
+module Utils
+  class HttpClient
+    include HTTParty
+
+    base_uri ENV.fetch('API_BASE_URL', 'https://api.example.com')
+    default_timeout 30
+
+    def self.get_with_retry(path, options = {})
+      retries = options.delete(:retries) || 3
+
+      retries.times do |attempt|
+        response = get(path, options)
+        return parse_response(response) if response.success?
+
+        sleep(2 ** attempt) if attempt < retries - 1
+      end
+
+      raise "Request failed after #{retries} attempts"
+    end
+
+    def self.post_with_auth(path, body, token)
+      options = {
+        body: body.to_json,
+        headers: {
+          'Content-Type' => 'application/json',
+          'Authorization' => "Bearer #{token}"
+        }
+      }
+
+      response = post(path, options)
+      parse_response(response)
+    end
+
+    private
+
+    def self.parse_response(response)
+      case response.code
+      when 200..299
+        JSON.parse(response.body)
+      when 400..499
+        raise ClientError, "Client error: #{response.code} - #{response.body}"
+      when 500..599
+        raise ServerError, "Server error: #{response.code} - #{response.body}"
+      else
+        raise "Unexpected response: #{response.code}"
+      end
+    end
+  end
+
+  class ClientError < StandardError; end
+  class ServerError < StandardError; end
+end
+```
+
+### 配置管理工具类
+```ruby
+# lib/utils/config.rb
+module Utils
+  class Config
+    include Singleton
+
+    def initialize
+      @config = load_config
+    end
+
+    def get(key, default = nil)
+      keys = key.to_s.split('.')
+      value = keys.reduce(@config) { |hash, k| hash&.dig(k) }
+      value || default
+    end
+
+    def database_url
+      get('database.url') || ENV['DATABASE_URL']
+    end
+
+    def redis_url
+      get('redis.url') || ENV['REDIS_URL']
+    end
+
+    def api_key
+      get('api.key') || ENV['API_KEY']
+    end
+
+    def log_level
+      get('log.level') || ENV['LOG_LEVEL'] || 'info'
+    end
+
+    private
+
+    def load_config
+      config_file = ENV['CONFIG_FILE'] || 'config/application.yml'
+
+      if File.exist?(config_file)
+        YAML.load_file(config_file)[environment] || {}
+      else
+        {}
+      end
+    end
+
+    def environment
+      ENV['RAILS_ENV'] || ENV['RACK_ENV'] || 'development'
+    end
+  end
+end
+```
+
+---
+
+## 🧪 Ruby 测试规范
+
+### RSpec 配置和最佳实践
+```ruby
+# spec/spec_helper.rb
+RSpec.configure do |config|
+  config.expect_with :rspec do |expectations|
+    expectations.include_chain_clauses_in_custom_matcher_descriptions = true
+  end
+
+  config.mock_with :rspec do |mocks|
+    mocks.verify_partial_doubles = true
+  end
+
+  config.shared_context_metadata_behavior = :apply_to_host_groups
+  config.filter_run_when_matching :focus
+  config.example_status_persistence_file_path = "spec/examples.txt"
+  config.disable_monkey_patching!
+  config.warnings = true
+
+  if config.files_to_run.one?
+    config.default_formatter = "doc"
+  end
+
+  config.profile_examples = 10
+  config.order = :random
+  Kernel.srand config.seed
+end
+```
+
+### 单元测试示例
+```ruby
+# spec/services/user_registration_service_spec.rb
+RSpec.describe UserRegistrationService do
+  describe '#call' do
+    let(:user_params) { { name: 'John Doe', email: 'john@example.com' } }
+    let(:service) { described_class.new(user_params: user_params) }
+
+    context 'when valid parameters are provided' do
+      it 'creates a new user' do
+        expect { service.call }.to change(User, :count).by(1)
+      end
+
+      it 'returns true' do
+        expect(service.call).to be true
+      end
+
+      it 'sends welcome email when requested' do
+        service.send_welcome_email = true
+        expect(UserMailer).to receive(:welcome_email).and_call_original
+        service.call
+      end
+    end
+
+    context 'when invalid parameters are provided' do
+      let(:user_params) { { name: '', email: 'invalid-email' } }
+
+      it 'does not create a user' do
+        expect { service.call }.not_to change(User, :count)
+      end
+
+      it 'returns false' do
+        expect(service.call).to be false
+      end
+    end
+  end
+end
+```
+
+### 集成测试示例
+```ruby
+# spec/requests/api/v1/users_spec.rb
+RSpec.describe 'API V1 Users', type: :request do
+  let(:user) { create(:user) }
+  let(:headers) { { 'Authorization' => "Bearer #{user.api_token}" } }
+
+  describe 'GET /api/v1/users' do
+    it 'returns list of users' do
+      create_list(:user, 3)
+
+      get '/api/v1/users', headers: headers
+
+      expect(response).to have_http_status(:ok)
+      expect(JSON.parse(response.body)).to have_key('users')
+    end
+  end
+
+  describe 'POST /api/v1/users' do
+    let(:user_params) do
+      {
+        user: {
+          name: 'New User',
+          email: 'newuser@example.com',
+          password: 'password123'
+        }
+      }
+    end
+
+    it 'creates a new user' do
+      post '/api/v1/users', params: user_params, headers: headers
+
+      expect(response).to have_http_status(:created)
+      expect(User.last.name).to eq('New User')
+    end
+  end
+end
+```
+      expect(User.last.name).to eq('New User')
+    end
+  end
+end
+```
+
+---
+
+## 🛠️ 可维护、可测试的生产级 Ruby 代码
+
+高质量的 Ruby 代码不仅要“能跑”，更要长期可维护、易测试、易扩展。以下为生产级 Ruby 代码的核心标准与实践建议：
+
+### 1. 可维护性标准
+- 结构清晰、模块化，单一职责（SRP）
+- 命名规范、含义明确，避免缩写和无意义命名
+- 代码风格统一（建议 RuboCop 检查），缩进、空格、注释恰当
+- 错误处理健壮，异常有捕获、日志有输出，统一处理机制
+- 关键模块/函数有文档注释，复杂逻辑有说明
+
+### 2. 可测试性标准
+- 逻辑可拆解、可隔离，函数/方法尽量无副作用
+- 依赖注入（如 logger、外部服务）便于 mock/stub
+- 单元测试、集成测试、E2E 测试齐全，CI 自动化
+- 关键路径有日志/metrics/tracing，便于观测
+
+### 3. 生产级代码 checklist
+
+| 维度   | 检查项                         |
+| ---- | --------------------------- |
+| 结构   | 每个类/模块是否职责单一？               |
+| 命名   | 所有命名是否清晰明确？                 |
+| 错误处理 | 所有异常是否被捕获处理？是否记录了日志？        |
+| 可测试  | 所有逻辑是否可以被 mock/stub？是否能写测试？ |
+| 接口   | 是否有明确的 API 合约（入参出参、状态码）？    |
+| 可读性  | 是否易懂？是否需要额外说明才能理解？          |
+| 自动化  | 是否有测试？CI 是否能验证？             |
+
+### 4. Ruby 代码示例对比
+
+#### ❌ 不可维护 / 不可测试
+```ruby
+def do_something(data)
+  result = []
+  data.each do |x|
+    if x[:type] == "a"
+      # ...
+    else
+      # ...
+    end
+  end
+  File.open("/tmp/log.txt", "a") { |f| f.write(result.to_s) }
+end
+```
+
+#### ✅ 可维护 / 可测试
+```ruby
+class DataProcessor
+  def initialize(logger: Logger.new($stdout))
+    @logger = logger
+  end
+
+  def process(data)
+    result = data.map { |item| handle_item(item) }
+    log_result(result)
+    result
+  end
+
+  private
+
+  def handle_item(item)
+    case item[:type]
+    when "a" then process_type_a(item)
+    when "b" then process_type_b(item)
+    else
+      raise "Unknown type: #{item[:type]}"
+    end
+  end
+
+  def process_type_a(item)
+    # ...
+  end
+
+  def process_type_b(item)
+    # ...
+  end
+
+  def log_result(result)
+    @logger.info("Process result: #{result}")
+  end
+end
+```
+
+### 5. 工具推荐
+- **代码规范检查**：`rubocop`
+- **测试框架**：`rspec`, `minitest`
+- **Mock 工具**：`rspec-mocks`, `mocha`
+- **CI 工具**：GitHub Actions, Travis CI, CircleCI
+
+### 6. DevOps/后端场景补充建议
+- 配置可注入（ENV、YAML、CLI args）
+- 关键路径有日志、Prometheus metrics、trace
+- 失败可恢复（超时、重试、熔断等）
+
+---
+      expect(User.last.name).to eq('New User')
+    end
+  end
+end
+```
+      expect(User.last.name).to eq('New User')
+    end
+  end
+end
+```

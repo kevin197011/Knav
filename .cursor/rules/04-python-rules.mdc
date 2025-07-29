@@ -1,0 +1,464 @@
+---
+alwaysApply: true
+---
+## 🚀 FastAPI 开发规范
+
+### API 结构和最佳实践
+```python
+# main.py
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from contextlib import asynccontextmanager
+import uvicorn
+
+from .routers import users, auth
+from .database import engine, create_tables
+from .middleware import LoggingMiddleware
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    await create_tables()
+    yield
+    # Shutdown
+    await engine.dispose()
+
+app = FastAPI(
+    title="My API",
+    description="A sample API with best practices",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# Middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.add_middleware(LoggingMiddleware)
+
+# Routers
+app.include_router(auth.router, prefix="/auth", tags=["auth"])
+app.include_router(users.router, prefix="/users", tags=["users"])
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+```
+
+### 路由和依赖注入
+```python
+# routers/users.py
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from typing import List
+
+from ..database import get_db_session
+from ..models import User
+from ..schemas import UserCreate, UserResponse
+from ..services import UserService
+from ..auth import get_current_user
+
+router = APIRouter()
+
+@router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def create_user(
+    user_data: UserCreate,
+    db: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user)
+):
+    """创建新用户"""
+    try:
+        user_service = UserService(db)
+        user = await user_service.create_user(user_data.dict())
+        return UserResponse.from_orm(user)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+
+@router.get("/", response_model=List[UserResponse])
+async def list_users(
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db_session)
+):
+    """获取用户列表"""
+    user_service = UserService(db)
+    users = await user_service.get_users(skip=skip, limit=limit)
+    return [UserResponse.from_orm(user) for user in users]
+
+@router.get("/{user_id}", response_model=UserResponse)
+async def get_user(
+    user_id: int,
+    db: AsyncSession = Depends(get_db_session)
+):
+    """获取单个用户"""
+    user_service = UserService(db)
+    user = await user_service.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    return UserResponse.from_orm(user)
+```
+
+---
+
+## 🔧 Python 工具类和日志规范
+
+### 统一日志工具类
+```python
+# utils/logger.py
+import logging
+import json
+import sys
+from datetime import datetime
+from typing import Any, Dict, Optional
+from contextvars import ContextVar
+import uuid
+
+# Context variables for tracing
+trace_id_var: ContextVar[str] = ContextVar('trace_id', default='')
+
+class StructuredLogger:
+    def __init__(self, name: str, level: str = "INFO"):
+        self.logger = logging.getLogger(name)
+        self.logger.setLevel(getattr(logging, level.upper()))
+
+        if not self.logger.handlers:
+            handler = logging.StreamHandler(sys.stdout)
+            handler.setFormatter(self._get_formatter())
+            self.logger.addHandler(handler)
+
+    def _get_formatter(self):
+        return logging.Formatter(
+            fmt='%(message)s',
+            datefmt='%Y-%m-%dT%H:%M:%S'
+        )
+
+    def _format_log(self, level: str, message: str, **kwargs) -> str:
+        log_data = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "level": level,
+            "service": "python-service",
+            "message": message,
+            "trace_id": trace_id_var.get() or str(uuid.uuid4())[:8],
+            **kwargs
+        }
+        return json.dumps(log_data, default=str)
+
+    def info(self, message: str, **kwargs):
+        self.logger.info(self._format_log("INFO", message, **kwargs))
+
+    def error(self, message: str, error: Optional[Exception] = None, **kwargs):
+        if error:
+            kwargs["error"] = {
+                "type": error.__class__.__name__,
+                "message": str(error),
+                "traceback": str(error.__traceback__)
+            }
+        self.logger.error(self._format_log("ERROR", message, **kwargs))
+
+    def warning(self, message: str, **kwargs):
+        self.logger.warning(self._format_log("WARNING", message, **kwargs))
+
+    def debug(self, message: str, **kwargs):
+        self.logger.debug(self._format_log("DEBUG", message, **kwargs))
+
+# Global logger instance
+logger = StructuredLogger(__name__)
+```
+
+### HTTP 客户端工具类
+```python
+# utils/http_client.py
+import aiohttp
+import asyncio
+from typing import Dict, Any, Optional
+from dataclasses import dataclass
+import json
+
+@dataclass
+class HttpResponse:
+    status: int
+    data: Any
+    headers: Dict[str, str]
+
+class HttpClient:
+    def __init__(self, base_url: str = "", timeout: int = 30):
+        self.base_url = base_url.rstrip('/')
+        self.timeout = aiohttp.ClientTimeout(total=timeout)
+        self.session: Optional[aiohttp.ClientSession] = None
+
+    async def __aenter__(self):
+        self.session = aiohttp.ClientSession(timeout=self.timeout)
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self.session:
+            await self.session.close()
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        data: Optional[Dict] = None,
+        headers: Optional[Dict] = None,
+        **kwargs
+    ) -> HttpResponse:
+        url = f"{self.base_url}{path}" if self.base_url else path
+
+        if not self.session:
+            raise RuntimeError("HttpClient must be used as async context manager")
+
+        async with self.session.request(
+            method,
+            url,
+            json=data,
+            headers=headers,
+            **kwargs
+        ) as response:
+            try:
+                response_data = await response.json()
+            except json.JSONDecodeError:
+                response_data = await response.text()
+
+            return HttpResponse(
+                status=response.status,
+                data=response_data,
+                headers=dict(response.headers)
+            )
+
+    async def get(self, path: str, **kwargs) -> HttpResponse:
+        return await self._request("GET", path, **kwargs)
+
+    async def post(self, path: str, data: Dict = None, **kwargs) -> HttpResponse:
+        return await self._request("POST", path, data=data, **kwargs)
+```
+
+---
+
+## 🧪 Python 测试规范
+
+### pytest 配置
+```python
+# conftest.py
+import pytest
+import asyncio
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+from httpx import AsyncClient
+
+from src.main import app
+from src.database import get_db_session, Base
+from src.models import User
+
+# Test database URL
+TEST_DATABASE_URL = "postgresql+asyncpg://test:test@localhost/test_db"
+
+@pytest.fixture(scope="session")
+def event_loop():
+    """Create an instance of the default event loop for the test session."""
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
+
+@pytest.fixture(scope="session")
+async def test_engine():
+    engine = create_async_engine(TEST_DATABASE_URL, echo=True)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield engine
+    await engine.dispose()
+
+@pytest.fixture
+async def test_session(test_engine):
+    async_session = sessionmaker(
+        test_engine, class_=AsyncSession, expire_on_commit=False
+    )
+    async with async_session() as session:
+        yield session
+        await session.rollback()
+
+@pytest.fixture
+async def client(test_session):
+    def override_get_db():
+        yield test_session
+
+    app.dependency_overrides[get_db_session] = override_get_db
+
+    async with AsyncClient(app=app, base_url="http://test") as client:
+        yield client
+
+    app.dependency_overrides.clear()
+
+@pytest.fixture
+async def test_user(test_session):
+    user = User(
+        name="Test User",
+        email="test@example.com",
+        hashed_password="hashed_password"
+    )
+    test_session.add(user)
+    await test_session.commit()
+    await test_session.refresh(user)
+    return user
+```
+
+### 单元测试示例
+```python
+# tests/test_user_service.py
+import pytest
+from src.services.user_service import UserService
+from src.models import User
+
+@pytest.mark.asyncio
+async def test_create_user(test_session):
+    service = UserService(test_session)
+    user_data = {
+        "name": "John Doe",
+        "email": "john@example.com",
+        "password": "password123"
+    }
+
+    user = await service.create_user(user_data)
+
+    assert user.name == "John Doe"
+    assert user.email == "john@example.com"
+    assert user.id is not None
+
+@pytest.mark.asyncio
+async def test_get_user_by_email(test_session, test_user):
+    service = UserService(test_session)
+
+    user = await service.get_user_by_email("test@example.com")
+
+    assert user is not None
+    assert user.email == "test@example.com"
+
+@pytest.mark.asyncio
+async def test_get_user_by_email_not_found(test_session):
+    service = UserService(test_session)
+
+    user = await service.get_user_by_email("nonexistent@example.com")
+
+    assert user is None
+```
+
+---
+
+## 🛠️ 可维护、可测试的生产级 Python 代码
+
+高质量的 Python 代码不仅要“能跑”，更要长期可维护、易测试、易扩展。以下为生产级 Python 代码的核心标准与实践建议：
+
+### 1. 可维护性标准
+- 结构清晰、模块化，单一职责（SRP）
+- 命名规范、含义明确，避免缩写和无意义命名
+- 代码风格统一（建议 PEP8 + Black/flake8 检查），缩进、空格、注释恰当
+- 错误处理健壮，异常有捕获、日志有输出，统一处理机制
+- 关键模块/函数有 docstring，复杂逻辑有说明
+
+### 2. 可测试性标准
+- 逻辑可拆解、可隔离，函数/方法尽量无副作用
+- 依赖注入（如 logger、外部服务）便于 mock/stub
+- 单元测试、集成测试、E2E 测试齐全，CI 自动化
+- 关键路径有日志/metrics/tracing，便于观测
+
+### 3. 生产级代码 checklist
+
+| 维度   | 检查项                         |
+| ---- | --------------------------- |
+| 结构   | 每个类/模块是否职责单一？               |
+| 命名   | 所有命名是否清晰明确？                 |
+| 错误处理 | 所有异常是否被捕获处理？是否记录了日志？        |
+| 可测试  | 所有逻辑是否可以被 mock/stub？是否能写测试？ |
+| 接口   | 是否有明确的 API 合约（入参出参、状态码）？    |
+| 可读性  | 是否易懂？是否需要额外说明才能理解？          |
+| 自动化  | 是否有测试？CI 是否能验证？             |
+
+### 4. Python 代码示例对比
+
+#### ❌ 不可维护 / 不可测试
+```python
+def do_something(data):
+    result = []
+    for x in data:
+        if x["type"] == "a":
+            # ...
+            pass
+        else:
+            # ...
+            pass
+    with open("/tmp/log.txt", "a") as f:
+        f.write(str(result))
+```
+
+#### ✅ 可维护 / 可测试
+```python
+import logging
+from typing import List, Dict, Any
+
+logger = logging.getLogger(__name__)
+
+class DataProcessor:
+    def __init__(self, logger=logger):
+        self.logger = logger
+
+    def process(self, data: List[Dict[str, Any]]) -> List[Any]:
+        result = [self.handle_item(item) for item in data]
+        self.log_result(result)
+        return result
+
+    def handle_item(self, item: Dict[str, Any]) -> Any:
+        if item["type"] == "a":
+            return self.process_type_a(item)
+        elif item["type"] == "b":
+            return self.process_type_b(item)
+        else:
+            raise ValueError(f"Unknown type: {item['type']}")
+
+    def process_type_a(self, item):
+        # ...
+        pass
+
+    def process_type_b(self, item):
+        # ...
+        pass
+
+    def log_result(self, result):
+        self.logger.info(f"Process result: {result}")
+```
+
+### 5. 工具推荐
+- **代码规范检查**：`black`, `flake8`, `isort`, `mypy`
+- **测试框架**：`pytest`, `unittest`
+- **Mock 工具**：`unittest.mock`, `pytest-mock`
+- **CI 工具**：GitHub Actions, Travis CI, CircleCI
+
+### 6. DevOps/后端场景补充建议
+- 配置可注入（ENV、YAML、CLI args）
+- 关键路径有日志、Prometheus metrics、trace
+- 失败可恢复（超时、重试、熔断等）
+
+### 9. 最小可见性原则（Principle of Least Visibility）
+- 除非必要，不要暴露任何接口、方法或变量。
+- Python 虽无强制访问控制，但应遵循下划线命名约定（如 `_method()` 表示私有），仅公开明确需要被外部调用的部分。
+- 该原则体现信息隐藏和封装思想，有助于降低耦合、提升可维护性、防止误用。
+- 相关原则：最小权限原则、单一职责原则、封装。
+
+
+    user = await service.get_user_by_email("nonexistent@example.com")
+
+    assert user is None
+```

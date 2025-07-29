@@ -1,0 +1,861 @@
+---
+alwaysApply: true
+---
+## 🌐 前端规则（Frontend Rules）
+
+### React + TypeScript 最佳实践
+```typescript
+// components/UserList.tsx
+import React, { useState, useEffect, useCallback } from 'react';
+import { User } from '../types/user';
+import { UserCard } from './UserCard';
+import { LoadingSpinner } from './LoadingSpinner';
+import { ErrorMessage } from './ErrorMessage';
+
+interface UserListProps {
+  onUserSelect?: (user: User) => void;
+  className?: string;
+}
+
+export const UserList: React.FC<UserListProps> = ({
+  onUserSelect,
+  className = ''
+}) => {
+  const [users, setUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchUsers = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const response = await fetch('/api/users');
+      if (!response.ok) {
+        throw new Error('Failed to fetch users');
+      }
+
+      const data = await response.json();
+      setUsers(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers]);
+
+  if (loading) return <LoadingSpinner />;
+  if (error) return <ErrorMessage message={error} onRetry={fetchUsers} />;
+
+  return (
+    <div className={`user-list ${className}`}>
+      <h2>Users</h2>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {users.map((user) => (
+          <UserCard
+            key={user.id}
+            user={user}
+            onClick={() => onUserSelect?.(user)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+};
+```
+
+### 自定义 Hooks
+```typescript
+// hooks/useApi.ts
+import { useState, useEffect, useCallback } from 'react';
+
+interface UseApiOptions<T> {
+  initialData?: T;
+  immediate?: boolean;
+}
+
+interface UseApiReturn<T> {
+  data: T | null;
+  loading: boolean;
+  error: string | null;
+  execute: () => Promise<void>;
+  reset: () => void;
+}
+
+export function useApi<T>(
+  apiCall: () => Promise<T>,
+  options: UseApiOptions<T> = {}
+): UseApiReturn<T> {
+  const { initialData = null, immediate = true } = options;
+
+  const [data, setData] = useState<T | null>(initialData);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const execute = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const result = await apiCall();
+      setData(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setLoading(false);
+    }
+  }, [apiCall]);
+
+  const reset = useCallback(() => {
+    setData(initialData);
+    setError(null);
+    setLoading(false);
+  }, [initialData]);
+
+  useEffect(() => {
+    if (immediate) {
+      execute();
+    }
+  }, [execute, immediate]);
+
+  return { data, loading, error, execute, reset };
+}
+```
+
+### 状态管理 (Zustand)
+```typescript
+// stores/userStore.ts
+import { create } from 'zustand';
+import { devtools } from 'zustand/middleware';
+import { User } from '../types/user';
+import { userApi } from '../api/userApi';
+
+interface UserState {
+  users: User[];
+  currentUser: User | null;
+  loading: boolean;
+  error: string | null;
+}
+
+interface UserActions {
+  fetchUsers: () => Promise<void>;
+  createUser: (userData: CreateUserRequest) => Promise<void>;
+  setCurrentUser: (user: User | null) => void;
+  clearError: () => void;
+}
+
+type UserStore = UserState & UserActions;
+
+export const useUserStore = create<UserStore>()(
+  devtools(
+    (set, get) => ({
+      // State
+      users: [],
+      currentUser: null,
+      loading: false,
+      error: null,
+
+      // Actions
+      fetchUsers: async () => {
+        set({ loading: true, error: null });
+        try {
+          const users = await userApi.getUsers();
+          set({ users, loading: false });
+        } catch (error) {
+          set({
+            error: error instanceof Error ? error.message : 'Failed to fetch users',
+            loading: false
+          });
+        }
+      },
+
+      createUser: async (userData) => {
+        set({ loading: true, error: null });
+        try {
+          const newUser = await userApi.createUser(userData);
+          set(state => ({
+            users: [...state.users, newUser],
+            loading: false
+          }));
+        } catch (error) {
+          set({
+            error: error instanceof Error ? error.message : 'Failed to create user',
+            loading: false
+          });
+        }
+      },
+
+      setCurrentUser: (user) => set({ currentUser: user }),
+      clearError: () => set({ error: null }),
+    }),
+    { name: 'user-store' }
+  )
+);
+```
+
+---
+
+## 🖥️ 后端规则（Backend Rules - Node.js）
+
+### Express + TypeScript API
+```typescript
+// server.ts
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import compression from 'compression';
+import rateLimit from 'express-rate-limit';
+
+import { errorHandler } from './middleware/errorHandler';
+import { requestLogger } from './middleware/requestLogger';
+import { authMiddleware } from './middleware/auth';
+import { userRoutes } from './routes/userRoutes';
+import { healthRoutes } from './routes/healthRoutes';
+import { Logger } from './utils/logger';
+
+const app = express();
+const logger = new Logger('server');
+
+// Security middleware
+app.use(helmet());
+app.use(cors({
+  origin: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3000'],
+  credentials: true,
+}));
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP',
+});
+app.use(limiter);
+
+// General middleware
+app.use(compression());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+app.use(requestLogger);
+
+// Routes
+app.use('/health', healthRoutes);
+app.use('/api/users', authMiddleware, userRoutes);
+
+// Error handling
+app.use(errorHandler);
+
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  logger.info(`Server running on port ${PORT}`);
+});
+
+export default app;
+```
+
+### 路由和控制器
+```typescript
+// routes/userRoutes.ts
+import { Router } from 'express';
+import { UserController } from '../controllers/userController';
+import { validateRequest } from '../middleware/validation';
+import { createUserSchema, updateUserSchema } from '../schemas/userSchemas';
+
+const router = Router();
+const userController = new UserController();
+
+router.get('/', userController.getUsers);
+router.get('/:id', userController.getUserById);
+router.post('/', validateRequest(createUserSchema), userController.createUser);
+router.put('/:id', validateRequest(updateUserSchema), userController.updateUser);
+router.delete('/:id', userController.deleteUser);
+
+export { router as userRoutes };
+```
+
+```typescript
+// controllers/userController.ts
+import { Request, Response, NextFunction } from 'express';
+import { UserService } from '../services/userService';
+import { Logger } from '../utils/logger';
+import { CreateUserRequest, UpdateUserRequest } from '../types/user';
+
+export class UserController {
+  private userService: UserService;
+  private logger: Logger;
+
+  constructor() {
+    this.userService = new UserService();
+    this.logger = new Logger('UserController');
+  }
+
+  getUsers = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = parseInt(req.query.limit as string) || 10;
+
+      const users = await this.userService.getAllUsers(page, limit);
+
+      res.json({
+        data: users,
+        pagination: {
+          page,
+          limit,
+          total: users.length
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getUserById = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { id } = req.params;
+      const user = await this.userService.getUserById(parseInt(id));
+
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      res.json({ data: user });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  createUser = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const userData: CreateUserRequest = req.body;
+      const user = await this.userService.createUser(userData);
+
+      res.status(201).json({ data: user });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  updateUser = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { id } = req.params;
+      const userData: UpdateUserRequest = req.body;
+
+      const user = await this.userService.updateUser(parseInt(id), userData);
+
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      res.json({ data: user });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  deleteUser = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { id } = req.params;
+      await this.userService.deleteUser(parseInt(id));
+
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  };
+}
+```
+
+### 中间件
+```typescript
+// middleware/errorHandler.ts
+import { Request, Response, NextFunction } from 'express';
+import { Logger } from '../utils/logger';
+
+const logger = new Logger('ErrorHandler');
+
+export const errorHandler = (
+  error: Error,
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  logger.error('Unhandled error', {
+    error: error.message,
+    stack: error.stack,
+    path: req.path,
+    method: req.method
+  });
+
+  if (res.headersSent) {
+    return next(error);
+  }
+
+  const status = error.name === 'ValidationError' ? 400 : 500;
+  const message = process.env.NODE_ENV === 'production'
+    ? 'Internal Server Error'
+    : error.message;
+
+  res.status(status).json({
+    error: message,
+    ...(process.env.NODE_ENV === 'development' && { stack: error.stack })
+  });
+};
+```
+
+```typescript
+// middleware/validation.ts
+import { Request, Response, NextFunction } from 'express';
+import { AnyZodObject, ZodError } from 'zod';
+
+export const validateRequest = (schema: AnyZodObject) => {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await schema.parseAsync({
+        body: req.body,
+        query: req.query,
+        params: req.params,
+      });
+      next();
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return res.status(400).json({
+          error: 'Validation failed',
+          details: error.errors
+        });
+      }
+      next(error);
+    }
+  };
+};
+```
+
+---
+
+## 🔧 JavaScript/TypeScript 工具类和日志规范
+
+### 统一日志工具类
+```typescript
+// utils/logger.ts
+interface LogContext {
+  [key: string]: unknown;
+}
+
+interface LogEntry {
+  timestamp: string;
+  level: string;
+  service: string;
+  message: string;
+  traceId?: string;
+  context?: LogContext;
+}
+
+export class Logger {
+  private serviceName: string;
+  private traceId?: string;
+
+  constructor(serviceName: string) {
+    this.serviceName = serviceName;
+  }
+
+  setTraceId(traceId: string): void {
+    this.traceId = traceId;
+  }
+
+  private formatLog(level: string, message: string, context?: LogContext): string {
+    const logEntry: LogEntry = {
+      timestamp: new Date().toISOString(),
+      level: level.toUpperCase(),
+      service: this.serviceName,
+      message,
+      ...(this.traceId && { traceId: this.traceId }),
+      ...(context && { context })
+    };
+
+    return JSON.stringify(logEntry);
+  }
+
+  info(message: string, context?: LogContext): void {
+    console.log(this.formatLog('info', message, context));
+  }
+
+  error(message: string, context?: LogContext): void {
+    console.error(this.formatLog('error', message, context));
+  }
+
+  warn(message: string, context?: LogContext): void {
+    console.warn(this.formatLog('warn', message, context));
+  }
+
+  debug(message: string, context?: LogContext): void {
+    if (process.env.NODE_ENV === 'development') {
+      console.debug(this.formatLog('debug', message, context));
+    }
+  }
+}
+```
+
+### HTTP 客户端工具类
+```typescript
+// utils/httpClient.ts
+interface RequestConfig {
+  headers?: Record<string, string>;
+  timeout?: number;
+  retries?: number;
+}
+
+interface ApiResponse<T> {
+  data: T;
+  status: number;
+  headers: Record<string, string>;
+}
+
+export class HttpClient {
+  private baseURL: string;
+  private defaultConfig: RequestConfig;
+  private logger: Logger;
+
+  constructor(baseURL: string, config: RequestConfig = {}) {
+    this.baseURL = baseURL.replace(/\/$/, '');
+    this.defaultConfig = {
+      timeout: 30000,
+      retries: 3,
+      ...config
+    };
+    this.logger = new Logger('HttpClient');
+  }
+
+  private async request<T>(
+    method: string,
+    path: string,
+    data?: unknown,
+    config: RequestConfig = {}
+  ): Promise<ApiResponse<T>> {
+    const url = `${this.baseURL}${path}`;
+    const mergedConfig = { ...this.defaultConfig, ...config };
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), mergedConfig.timeout);
+
+    try {
+      const response = await fetch(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          ...mergedConfig.headers
+        },
+        body: data ? JSON.stringify(data) : undefined,
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const responseData = await response.json();
+
+      return {
+        data: responseData,
+        status: response.status,
+        headers: Object.fromEntries(response.headers.entries())
+      };
+    } catch (error) {
+      clearTimeout(timeoutId);
+      this.logger.error('HTTP request failed', {
+        method,
+        url,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      throw error;
+    }
+  }
+
+  async get<T>(path: string, config?: RequestConfig): Promise<ApiResponse<T>> {
+    return this.request<T>('GET', path, undefined, config);
+  }
+
+  async post<T>(path: string, data: unknown, config?: RequestConfig): Promise<ApiResponse<T>> {
+    return this.request<T>('POST', path, data, config);
+  }
+}
+```
+
+### 配置管理工具类
+```typescript
+// utils/config.ts
+import { z } from 'zod';
+
+const configSchema = z.object({
+  NODE_ENV: z.enum(['development', 'staging', 'production']).default('development'),
+  PORT: z.string().transform(Number).default(3000),
+  DATABASE_URL: z.string(),
+  REDIS_URL: z.string().optional(),
+  JWT_SECRET: z.string(),
+  API_KEY: z.string().optional(),
+  LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+  ALLOWED_ORIGINS: z.string().optional(),
+});
+
+type Config = z.infer<typeof configSchema>;
+
+class ConfigManager {
+  private config: Config;
+
+  constructor() {
+    try {
+      this.config = configSchema.parse(process.env);
+    } catch (error) {
+      console.error('Configuration validation failed:', error);
+      process.exit(1);
+    }
+  }
+
+  get<K extends keyof Config>(key: K): Config[K] {
+    return this.config[key];
+  }
+
+  isDevelopment(): boolean {
+    return this.config.NODE_ENV === 'development';
+  }
+
+  isProduction(): boolean {
+    return this.config.NODE_ENV === 'production';
+  }
+
+  getPort(): number {
+    return this.config.PORT;
+  }
+
+  getDatabaseUrl(): string {
+    return this.config.DATABASE_URL;
+  }
+
+  getJwtSecret(): string {
+    return this.config.JWT_SECRET;
+  }
+}
+
+export const config = new ConfigManager();
+```
+
+---
+
+## 🧪 JavaScript/TypeScript 测试规范
+
+### Jest 配置
+```typescript
+// jest.config.ts
+import type { Config } from 'jest';
+
+const config: Config = {
+  preset: 'ts-jest',
+  testEnvironment: 'node',
+  roots: ['<rootDir>/src'],
+  testMatch: [
+    '**/__tests__/**/*.ts',
+    '**/?(*.)+(spec|test).ts'
+  ],
+  transform: {
+    '^.+\\.ts$': 'ts-jest',
+  },
+  collectCoverageFrom: [
+    'src/**/*.ts',
+    '!src/**/*.d.ts',
+    '!src/**/*.test.ts',
+    '!src/**/*.spec.ts'
+  ],
+  coverageDirectory: 'coverage',
+  coverageReporters: ['text', 'lcov', 'html'],
+  setupFilesAfterEnv: ['<rootDir>/src/test/setup.ts'],
+  testTimeout: 10000,
+};
+
+export default config;
+```
+
+### 单元测试示例
+```typescript
+// __tests__/services/userService.test.ts
+import { UserService } from '../../services/userService';
+import { DatabaseService } from '../../services/databaseService';
+import { Logger } from '../../utils/logger';
+
+// Mock dependencies
+jest.mock('../../services/databaseService');
+jest.mock('../../utils/logger');
+
+const mockDb = new DatabaseService() as jest.Mocked<DatabaseService>;
+const mockLogger = new Logger('test') as jest.Mocked<Logger>;
+
+describe('UserService', () => {
+  let userService: UserService;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    userService = new UserService(mockDb, mockLogger);
+  });
+
+  describe('createUser', () => {
+    it('should create a user successfully', async () => {
+      const userData = {
+        name: 'John Doe',
+        email: 'john@example.com',
+        password: 'password123'
+      };
+
+      const expectedUser = {
+        id: 1,
+        name: 'John Doe',
+        email: 'john@example.com',
+        createdAt: new Date()
+      };
+
+      mockDb.findUserByEmail.mockResolvedValue(null);
+      mockDb.createUser.mockResolvedValue(expectedUser);
+
+      const result = await userService.createUser(userData);
+
+      expect(mockDb.findUserByEmail).toHaveBeenCalledWith(userData.email);
+      expect(mockDb.createUser).toHaveBeenCalledWith(userData);
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'Creating new user',
+        { email: userData.email }
+      );
+      expect(result).toEqual(expectedUser);
+    });
+
+    it('should throw error if user already exists', async () => {
+      const userData = {
+        name: 'John Doe',
+        email: 'john@example.com',
+        password: 'password123'
+      };
+
+      const existingUser = {
+        id: 1,
+        name: 'Existing User',
+        email: 'john@example.com',
+        createdAt: new Date()
+      };
+
+      mockDb.findUserByEmail.mockResolvedValue(existingUser);
+
+      await expect(userService.createUser(userData)).rejects.toThrow('User already exists');
+      expect(mockDb.createUser).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getUserById', () => {
+    it('should return user when found', async () => {
+      const userId = 1;
+      const expectedUser = {
+        id: userId,
+        name: 'John Doe',
+        email: 'john@example.com',
+        createdAt: new Date()
+      };
+
+      mockDb.findUserById.mockResolvedValue(expectedUser);
+
+      const result = await userService.getUserById(userId);
+
+      expect(mockDb.findUserById).toHaveBeenCalledWith(userId);
+      expect(result).toEqual(expectedUser);
+    });
+
+    it('should return null when user not found', async () => {
+      const userId = 999;
+      mockDb.findUserById.mockResolvedValue(null);
+
+      const result = await userService.getUserById(userId);
+
+      expect(result).toBeNull();
+    });
+  });
+});
+```
+
+### React 组件测试
+```typescript
+// __tests__/components/UserList.test.tsx
+import React from 'react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { UserList } from '../../components/UserList';
+
+// Mock fetch
+global.fetch = jest.fn();
+
+const mockUsers = [
+  { id: 1, name: 'John Doe', email: 'john@example.com', createdAt: new Date() },
+  { id: 2, name: 'Jane Smith', email: 'jane@example.com', createdAt: new Date() }
+];
+
+describe('UserList', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('should render loading state initially', () => {
+    (fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      json: async () => mockUsers
+    });
+
+    render(<UserList />);
+
+    expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
+  });
+
+  it('should render users after successful fetch', async () => {
+    (fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      json: async () => mockUsers
+    });
+
+    render(<UserList />);
+
+    await waitFor(() => {
+      expect(screen.getByText('John Doe')).toBeInTheDocument();
+      expect(screen.getByText('Jane Smith')).toBeInTheDocument();
+    });
+  });
+
+  it('should handle fetch error', async () => {
+    (fetch as jest.Mock).mockRejectedValue(new Error('Network error'));
+
+    render(<UserList />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/error occurred/i)).toBeInTheDocument();
+    });
+  });
+
+  it('should call onUserSelect when user is clicked', async () => {
+    const onUserSelect = jest.fn();
+    (fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      json: async () => mockUsers
+    });
+
+    render(<UserList onUserSelect={onUserSelect} />);
+
+    await waitFor(() => {
+      fireEvent.click(screen.getByText('John Doe'));
+    });
+
+    expect(onUserSelect).toHaveBeenCalledWith(mockUsers[0]);
+  });
+});
+```
+
+```
+
+    });
+
+    expect(onUserSelect).toHaveBeenCalledWith(mockUsers[0]);
+  });
+});

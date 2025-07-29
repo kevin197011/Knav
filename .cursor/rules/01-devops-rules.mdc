@@ -1,0 +1,201 @@
+---
+alwaysApply: true
+---
+# 🚀 DevOps 开发规范
+
+> 专注于 DevOps 平台/工具开发项目的最佳实践规范
+
+---
+
+## 🔧 通用规则（Universal Rules）
+
+| 编号 | 内容 |
+|------|------|
+| R1  | 所有代码必须通过 Linter（如 ESLint、golangci-lint、Rubocop）和格式化工具（Prettier、Black、go fmt 等） |
+| R2  | 所有提交必须包含清晰描述，支持使用 [Conventional Commits](mdc:https:/www.conventionalcommits.org) 格式 |
+| R3  | 项目应支持 `dev` 一键启动（如 `make dev` / `docker-compose up`） |
+| R4  | 所有变更必须通过代码审查（至少 1 人审批） |
+| R5  | 所有服务和脚本必须具备 `--help` 支持和 README 说明 |
+| R6  | 所有日志必须结构化输出（JSON / Logfmt / K-V），并加上 trace ID 或 request ID |
+| R7  | Cursor 编辑器中需启用 GPT 自动注释 + 单元测试建议，提升智能协同效率 |
+
+---
+
+## ☸️ DevOps & Infra 规则（DevOps Rules）
+
+| 编号 | 内容 |
+|------|------|
+| D1  | 所有服务必须具备 Dockerfile 和 Kubernetes YAML/Helm 支持 |
+| D2  | 支持多环境部署（dev/staging/prod），配置隔离 |
+| D3  | CI/CD 使用 GitHub Actions / GitLab CI / ArgoCD / Tekton，最少包含单测、构建、部署 |
+| D4  | 所有任务应记录执行日志、状态，并保留历史记录 |
+| D5  | 所有构建产物应打上唯一版本号（Git commit SHA + tag） |
+| D6  | 应用必须支持零停机部署（readiness probe, blue-green, rolling） |
+| D7  | 所有外部服务依赖必须显式定义（如 Redis、DB、MQ）并支持模拟模式 |
+| D8  | 使用 `Terraform` / `Pulumi` 管理基础设施，配置应模块化 |
+| D9  | 所有服务应接入统一监控（如 Prometheus + Grafana）和告警系统（Alertmanager、PagerDuty） |
+
+---
+
+## 🔧 Infrastructure as Code (IaC)
+
+- 使用 Terraform、Ansible、CloudFormation、Pulumi 等工具
+- 所有基础设施配置必须版本化
+- 环境配置应该是幂等的和可重复的
+- 使用模块化和可重用的配置
+
+```hcl
+# Terraform 示例结构
+resource "aws_instance" "example" {
+  ami           = var.ami_id
+  instance_type = var.instance_type
+
+  tags = {
+    Name        = "${var.project_name}-${var.environment}"
+    Environment = var.environment
+    Project     = var.project_name
+  }
+}
+```
+
+### 容器化和编排
+- 使用 Docker 进行容器化
+- 实施多阶段构建优化镜像大小
+- 使用 Kubernetes 或 Docker Compose 进行编排
+- 实施健康检查和资源限制
+
+```dockerfile
+# 多阶段构建示例
+FROM node:18-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+
+FROM node:18-alpine AS runtime
+WORKDIR /app
+COPY --from=builder /app/node_modules ./node_modules
+COPY . .
+EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:3000/health || exit 1
+CMD ["npm", "start"]
+```
+
+### CI/CD 流水线
+- 实施自动化测试、构建和部署
+- 使用蓝绿部署或滚动更新
+- 实施自动回滚机制
+- 集成安全扫描和代码质量检查
+
+```yaml
+# GitHub Actions 示例
+name: CI/CD Pipeline
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Tests
+        run: |
+          make test
+          make security-scan
+          make lint
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Production
+        run: make deploy-prod
+```
+
+### 监控和日志
+- 实施应用性能监控(APM)
+- 使用结构化日志
+- 设置告警和仪表板
+- 实施分布式链路追踪
+
+```json
+{
+  "timestamp": "2024-12-31T10:00:00Z",
+  "level": "info",
+  "service": "user-service",
+  "trace_id": "abc123",
+  "span_id": "def456",
+  "message": "User created successfully",
+  "user_id": "12345",
+  "duration_ms": 150
+}
+```
+
+---
+
+## 🔐 安全规则（Security Rules）
+
+| 编号 | 内容 |
+|------|------|
+| S1  | 不得将密码、Token、密钥等写入 Git（使用 Secret Manager、Vault、dotenv-vault） |
+| S2  | 所有外部 API 请求应启用 TLS/HTTPS |
+| S3  | 所有 Web 表单必须防止 CSRF/XSS/SQL 注入 |
+| S4  | 所有端口开放必须受限于防火墙 / 安全组 |
+| S5  | 所有依赖项必须定期扫描漏洞（Dependabot / snyk / osv-scanner） |
+| S6  | 所有认证必须加盐加密存储（如 bcrypt, Argon2） |
+
+---
+
+## ✅ 测试规则（Testing Rules）
+
+| 编号 | 内容 |
+|------|------|
+| T1  | 单元测试必须覆盖核心逻辑，代码覆盖率 ≥ 80% |
+| T2  | 所有 PR 提交前必须通过 CI 测试 |
+| T3  | 测试应包含：单元测试、集成测试、e2e 测试（可用 Playwright/Cypress） |
+| T4  | 测试数据应使用 Mock、Fixture 或测试数据库隔离 |
+| T5  | 若使用 gRPC/事件队列，应添加模拟器或测试容器 |
+
+---
+
+## 📝 文档规范（Docs Rules）
+
+| 编号 | 内容 |
+|------|------|
+| W1  | 每个服务必须提供英文 README.md 和中文 README.zh-CN.md，包含安装、运行、测试、部署说明 |
+| W2  | 所有代码输出信息（日志、错误信息、用户提示等）必须使用英文 |
+| W3  | 所有接口需自动生成 API 文档（如 Swagger, Redoc） |
+| W4  | 所有架构图必须同步（建议用 Excalidraw / Mermaid） |
+| W5  | 项目根目录需有 `docs/` 文件夹，支持 MkDocs 或 Docify 构建 |
+| W6  | 技术术语在中文文档中保持英文原文 |
+| W7  | 两种语言的文档必须保持结构一致，同步更新 |
+
+---
+
+## 📦 项目结构（建议模板）
+
+```text
+.
+├── backend/
+│   ├── main.go / app.py / app.rb
+│   ├── Dockerfile
+│   ├── internal/
+│   ├── config/
+│   └── api/
+├── frontend/
+│   ├── src/
+│   ├── public/
+│   └── tailwind.config.js
+├── infra/
+│   ├── terraform/
+│   └── k8s/
+├── .github/workflows/
+├── Makefile
+├── docker-compose.yml
+├── .env
+└── README.md
+```

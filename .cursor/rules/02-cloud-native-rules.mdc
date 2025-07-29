@@ -1,0 +1,524 @@
+---
+alwaysApply: true
+---
+# ☁️ 云原生开发规范
+
+> 专注于云原生应用开发的最佳实践规范，涵盖微服务、容器化、服务网格等
+
+---
+
+## 🎯 云原生架构原则
+
+- 遵循 12-Factor App 和 15-Factor App 原则
+- 采用微服务架构设计
+- 实施容器优先策略
+- 使用声明式配置管理
+- 实现不可变基础设施
+- 采用服务网格架构
+- 实施自动化运维
+
+---
+
+## 🚀 微服务设计模式
+
+### 基础微服务配置
+```yaml
+# 微服务架构示例
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-config
+data:
+  database.url: "postgresql://user:pass@db:5432/myapp"
+  redis.url: "redis://redis:6379/0"
+  log.level: "info"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+  labels:
+    app: user-service
+    version: v1.2.0
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+        version: v1.2.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: user-service
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 2000
+      containers:
+      - name: user-service
+        image: myregistry/user-service:v1.2.0
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 9090
+          name: grpc
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: url
+        - name: SERVICE_NAME
+          value: "user-service"
+        - name: SERVICE_VERSION
+          value: "v1.2.0"
+        envFrom:
+        - configMapRef:
+            name: service-config
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health/startup
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 30
+        volumeMounts:
+        - name: config
+          mountPath: /etc/config
+          readOnly: true
+        - name: secrets
+          mountPath: /etc/secrets
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: service-config
+      - name: secrets
+        secret:
+          secretName: service-secrets
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+  labels:
+    app: user-service
+spec:
+  selector:
+    app: user-service
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+  - name: grpc
+    port: 9090
+    targetPort: 9090
+  type: ClusterIP
+```
+
+---
+
+## 🕸️ 服务网格架构 (Istio)
+
+### VirtualService 配置
+```yaml
+# VirtualService 示例
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: user-service
+spec:
+  hosts:
+  - user-service
+  http:
+  - match:
+    - headers:
+        canary:
+          exact: "true"
+    route:
+    - destination:
+        host: user-service
+        subset: canary
+      weight: 100
+  - route:
+    - destination:
+        host: user-service
+        subset: stable
+      weight: 90
+    - destination:
+        host: user-service
+        subset: canary
+      weight: 10
+  - fault:
+      delay:
+        percentage:
+          value: 0.1
+        fixedDelay: 5s
+    route:
+    - destination:
+        host: user-service
+        subset: stable
+```
+
+### DestinationRule 配置
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: user-service
+spec:
+  host: user-service
+  trafficPolicy:
+    loadBalancer:
+      simple: LEAST_CONN
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 50
+        maxRequestsPerConnection: 10
+    circuitBreaker:
+      consecutiveErrors: 3
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+    retryPolicy:
+      attempts: 3
+      perTryTimeout: 2s
+  subsets:
+  - name: stable
+    labels:
+      version: v1.2.0
+  - name: canary
+    labels:
+      version: v1.3.0-beta
+```
+
+---
+
+## 💾 云原生存储和数据管理
+
+### StatefulSet 配置
+```yaml
+# StatefulSet 示例
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgresql
+spec:
+  serviceName: postgresql
+  replicas: 3
+  selector:
+    matchLabels:
+      app: postgresql
+  template:
+    metadata:
+      labels:
+        app: postgresql
+    spec:
+      containers:
+      - name: postgresql
+        image: postgres:15-alpine
+        env:
+        - name: POSTGRES_DB
+          value: myapp
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: username
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: password
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+        - name: config
+          mountPath: /etc/postgresql/postgresql.conf
+          subPath: postgresql.conf
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+      volumes:
+      - name: config
+        configMap:
+          name: postgres-config
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: "fast-ssd"
+      resources:
+        requests:
+          storage: 10Gi
+```
+
+---
+
+## 🔄 云原生部署策略
+
+### 蓝绿部署
+```yaml
+# 蓝绿部署示例
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: rollout-bluegreen
+spec:
+  replicas: 5
+  strategy:
+    blueGreen:
+      activeService: rollout-bluegreen-active
+      previewService: rollout-bluegreen-preview
+      autoPromotionEnabled: false
+      scaleDownDelaySeconds: 30
+      prePromotionAnalysis:
+        templates:
+        - templateName: success-rate
+        args:
+        - name: service-name
+          value: rollout-bluegreen-preview.default.svc.cluster.local
+      postPromotionAnalysis:
+        templates:
+        - templateName: success-rate
+        args:
+        - name: service-name
+          value: rollout-bluegreen-active.default.svc.cluster.local
+  selector:
+    matchLabels:
+      app: rollout-bluegreen
+  template:
+    metadata:
+      labels:
+        app: rollout-bluegreen
+    spec:
+      containers:
+      - name: rollouts-demo
+        image: argoproj/rollouts-demo:blue
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        resources:
+          requests:
+            memory: 32Mi
+            cpu: 5m
+```
+
+### 金丝雀部署
+```yaml
+# 金丝雀部署示例
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: rollout-canary
+spec:
+  replicas: 5
+  strategy:
+    canary:
+      steps:
+      - setWeight: 20
+      - pause: {}
+      - setWeight: 40
+      - pause: {duration: 10}
+      - setWeight: 60
+      - pause: {duration: 10}
+      - setWeight: 80
+      - pause: {duration: 10}
+  selector:
+    matchLabels:
+      app: rollout-canary
+  template:
+    metadata:
+      labels:
+        app: rollout-canary
+    spec:
+      containers:
+      - name: rollouts-demo
+        image: argoproj/rollouts-demo:blue
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+```
+
+---
+
+## 📊 可观测性和监控
+
+### Prometheus 监控配置
+```yaml
+# ServiceMonitor 配置
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: user-service-monitor
+spec:
+  selector:
+    matchLabels:
+      app: user-service
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+```
+
+### Grafana Dashboard 配置
+```json
+{
+  "dashboard": {
+    "title": "User Service Metrics",
+    "panels": [
+      {
+        "title": "Request Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{job=\"user-service\"}[5m])"
+          }
+        ]
+      },
+      {
+        "title": "Error Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{job=\"user-service\",status=~\"5..\"}[5m]) / rate(http_requests_total{job=\"user-service\"}[5m])"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+---
+
+## 🔐 云原生安全
+
+### Pod Security Standards
+```yaml
+# Pod Security Policy
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: restricted
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  seLinux:
+    rule: 'RunAsAny'
+  fsGroup:
+    rule: 'RunAsAny'
+```
+
+### Network Policies
+```yaml
+# 网络策略示例
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: user-service-netpol
+spec:
+  podSelector:
+    matchLabels:
+      app: user-service
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: api-gateway
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: database
+    ports:
+    - protocol: TCP
+      port: 5432
+```
+
+---
+
+## 🚀 云原生最佳实践
+
+### 配置管理
+- 使用 ConfigMap 和 Secret 分离配置和敏感信息
+- 实施配置版本化和环境隔离
+- 使用 Helm 或 Kustomize 管理配置模板
+
+### 资源管理
+- 设置合理的资源请求和限制
+- 使用 HPA 和 VPA 自动扩缩容
+- 实施资源配额和限制范围
+
+### 服务发现
+- 使用 Kubernetes Service 进行服务发现
+- 实施健康检查和就绪探针
+- 使用服务网格进行高级流量管理
+
+### 数据持久化
+- 使用 StatefulSet 管理有状态应用
+- 实施数据备份和恢复策略
+- 使用适当的存储类和访问模式
