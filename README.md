@@ -122,7 +122,7 @@ open http://localhost:4567
 |--------|--------|------|
 | `RACK_ENV` | development | 运行环境 |
 | `SESSION_SECRET` | 自动生成 | 会话密钥 |
-| `DATABASE_PATH` | navigation.db | 数据库文件路径 |
+| `DATABASE_PATH` | knav.db | 数据库文件路径 |
 | `TZ` | Asia/Shanghai | 时区设置 |
 
 ### Docker 配置
@@ -220,10 +220,10 @@ kk-guide/
 ### 备份策略
 ```bash
 # 备份数据库
-cp data/navigation.db backup/navigation_$(date +%Y%m%d_%H%M%S).db
+cp data/knav.db backup/navigation_$(date +%Y%m%d_%H%M%S).db
 
 # 恢复数据库
-cp backup/navigation_20231201_120000.db data/navigation.db
+cp backup/navigation_20231201_120000.db data/knav.db
 ```
 
 ## 故障排除
@@ -246,7 +246,7 @@ ls -la data/
 
 # 修复权限
 chmod 755 data/
-chmod 644 data/navigation.db
+chmod 644 data/knav.db
 ```
 
 #### 3. Docker 构建失败
@@ -261,7 +261,7 @@ docker-compose build --no-cache
 ### 日志查看
 ```bash
 # 查看应用日志
-docker-compose logs -f navigation-app
+docker-compose logs -f knav-app
 
 # 查看 Nginx 日志
 docker-compose logs -f nginx

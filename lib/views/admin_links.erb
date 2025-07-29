@@ -31,7 +31,7 @@
           </div>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
             <label for="category_id" class="block text-sm font-medium text-gray-700 mb-2">所属分类</label>
             <select name="category_id" id="category_id" required
@@ -139,6 +139,16 @@
             <label for="sort_order" class="block text-sm font-medium text-gray-700 mb-2">排序</label>
             <input type="number" name="sort_order" id="sort_order" value="0"
                    class="block w-full px-3 py-3 bg-gray-50 border border-gray-300 rounded-lg text-gray-800 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-tech focus:border-tech transition-all duration-200">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">状态</label>
+            <div class="flex items-center h-12">
+              <label class="flex items-center space-x-2 cursor-pointer">
+                <input type="checkbox" name="is_active" id="is_active" checked
+                       class="w-4 h-4 text-tech bg-gray-50 border-gray-300 rounded focus:ring-tech focus:ring-2">
+                <span class="text-sm text-gray-700">激活状态</span>
+              </label>
+            </div>
           </div>
         </div>
 
@@ -268,7 +278,7 @@
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <div class="flex items-center space-x-2">
-                      <button onclick="editLink(<%= link[0] %>, '<%= link[1].gsub("'", "\\'") %>', '<%= link[2].gsub("'", "\\'") %>', '<%= (link[3] || '').gsub("'", "\\'") %>', '<%= (link[5] || '').gsub("'", "\\'") %>', <%= link[6] %>, <%= link[4] %>)"
+                      <button onclick="editLink(<%= link[0] %>, '<%= link[1].gsub("'", "\\'") %>', '<%= link[2].gsub("'", "\\'") %>', '<%= (link[3] || '').gsub("'", "\\'") %>', '<%= (link[5] || '').gsub("'", "\\'") %>', <%= link[6] %>, <%= link[4] %>, <%= link[7] %>)"
                               class="text-blue-600 hover:text-blue-700 transition-colors"
                               title="编辑链接">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -316,7 +326,7 @@
                         </div>
                       </div>
 
-                      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
                         <div>
                           <label class="block text-sm font-medium text-gray-700 mb-1">所属分类</label>
                           <select id="edit-link-category-<%= link[0] %>" required
@@ -423,6 +433,16 @@
                           <label class="block text-sm font-medium text-gray-700 mb-1">排序</label>
                           <input type="number" id="edit-link-sort-<%= link[0] %>"
                                  class="block w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-800 text-sm focus:outline-none focus:ring-2 focus:ring-tech focus:border-tech">
+                        </div>
+                        <div>
+                          <label class="block text-sm font-medium text-gray-700 mb-1">状态</label>
+                          <div class="flex items-center h-10">
+                            <label class="flex items-center space-x-2 cursor-pointer">
+                              <input type="checkbox" id="edit-link-active-<%= link[0] %>"
+                                     class="w-4 h-4 text-tech bg-white border-gray-300 rounded focus:ring-tech focus:ring-2">
+                              <span class="text-sm text-gray-700">激活状态</span>
+                            </label>
+                          </div>
                         </div>
                       </div>
 
@@ -599,6 +619,7 @@
     const icon = formData.get('icon');
     const sortOrder = formData.get('sort_order');
     const categoryId = formData.get('category_id');
+    const isActive = formData.get('is_active') === 'on' ? 1 : 0;
 
     // Show loading notification
     showNotification('正在添加链接...', 'warning');
@@ -615,7 +636,8 @@
         description: description,
         icon: icon,
         sort_order: sortOrder,
-        category_id: categoryId
+        category_id: categoryId,
+        is_active: isActive
       })
     })
     .then(response => {
@@ -679,7 +701,7 @@
   }
 
   // Edit link function
-  function editLink(id, title, url, description, icon, sortOrder, categoryId) {
+  function editLink(id, title, url, description, icon, sortOrder, categoryId, isActive) {
     // Hide normal row and show edit row
     document.querySelector('.link-row-' + id).classList.add('hidden');
     document.querySelector('.edit-link-row-' + id).classList.remove('hidden');
@@ -691,6 +713,7 @@
     document.getElementById('edit-link-icon-' + id).value = icon || '';
     document.getElementById('edit-link-sort-' + id).value = sortOrder;
     document.getElementById('edit-link-category-' + id).value = categoryId;
+    document.getElementById('edit-link-active-' + id).checked = isActive == 1;
   }
 
   // Cancel link edit function
@@ -710,6 +733,7 @@
     const icon = document.getElementById('edit-link-icon-' + id).value;
     const sortOrder = document.getElementById('edit-link-sort-' + id).value;
     const categoryId = document.getElementById('edit-link-category-' + id).value;
+    const isActive = document.getElementById('edit-link-active-' + id).checked ? 1 : 0;
 
     // Show loading notification
     showNotification('正在更新链接...', 'warning');
@@ -726,7 +750,8 @@
         description: description,
         icon: icon,
         sort_order: sortOrder,
-        category_id: categoryId
+        category_id: categoryId,
+        is_active: isActive
       })
     })
     .then(response => response.json())
@@ -744,6 +769,20 @@
       console.error('Error:', error);
       showNotification('更新失败，请重试', 'error');
     });
+  }
+
+  // Emoji picker functions
+  function showEmojiPicker() {
+    document.getElementById('emojiPicker').classList.remove('hidden');
+  }
+
+  function hideEmojiPicker() {
+    document.getElementById('emojiPicker').classList.add('hidden');
+  }
+
+  function selectEmoji(emoji) {
+    document.getElementById('icon').value = emoji;
+    hideEmojiPicker();
   }
 
   // Edit emoji picker functions

@@ -1,7 +1,7 @@
 services:
-  navigation-app:
+  knav-app:
     build: .
-    container_name: kk-navigation
+    container_name: knav-app
     user: root
     ports:
       - "4567:4567"
@@ -16,7 +16,7 @@ services:
       # 会话密钥（生产环境请使用更安全的密钥）
       - SESSION_SECRET=your_very_secure_session_secret_key_here_at_least_32_bytes_long
       # 数据库路径
-      - DATABASE_PATH=/app/data/navigation.db
+      - DATABASE_PATH=/app/data/knav.db
       # 时区设置
       - TZ=Asia/Shanghai
     restart: unless-stopped
@@ -33,12 +33,12 @@ services:
       - "traefik.http.routers.navigation.tls.certresolver=letsencrypt"
       - "traefik.http.services.navigation.loadbalancer.server.port=4567"
     networks:
-      - navigation-network
+      - knav-network
 
   # 可选：添加反向代理（Nginx）
   nginx:
     image: nginx:alpine
-    container_name: kk-navigation-nginx
+    container_name: knav-nginx
     ports:
       - "80:80"
       - "443:443"
@@ -47,15 +47,15 @@ services:
       - ./nginx/ssl:/etc/nginx/ssl:ro
       - ./logs/nginx:/var/log/nginx
     depends_on:
-      - navigation-app
+      - knav-app
     restart: unless-stopped
     networks:
-      - navigation-network
+      - knav-network
 
 networks:
-  navigation-network:
+  knav-network:
     driver: bridge
 
 volumes:
-  navigation-data:
+  knav-data:
     driver: local

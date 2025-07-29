@@ -10,10 +10,14 @@ require 'time'
 # task default: %w[push]
 
 task :push do
-  system 'rubocop -A'
-  system 'git update-index --chmod=+x push.rb'
   system 'git add .'
   system "git commit -m 'Update #{Time.now}'"
   system 'git pull'
   system 'git push origin main'
+end
+
+task :dev do
+  system 'export COMPOSE_BAKE=true'
+  system 'docker compose up --build -d'
+  system 'docker compose logs -f'
 end
