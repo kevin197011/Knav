@@ -67,7 +67,7 @@ module Models
       { links: links, pagination: pagination }
     end
 
-    def self.create(title, url, description, category_id, icon, sort_order = 0, is_active = 1)
+    def self.create(title, url, description, category_id, icon = '🌐', sort_order = 0, is_active = 1)
       db = Config::Database.get_db
       db.execute('INSERT INTO nav_links (title, url, description, category_id, icon, sort_order, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)',
                  [title, url, description, category_id, icon, sort_order, is_active])

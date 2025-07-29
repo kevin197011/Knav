@@ -1,8 +1,3 @@
-# Copyright (c) 2025 kk
-#
-# This software is released under the MIT License.
-# https://opensource.org/licenses/MIT
-
 # 运维导航系统 (KK Guide)
 
 > 一个轻量级的运维导航管理系统，基于 Ruby Sinatra 构建，提供简洁的前端展示和强大的后台管理功能。
@@ -25,7 +20,7 @@
 ```bash
 # 克隆项目
 git clone <repository-url>
-cd kk-guide
+cd Knav
 
 # 一键部署
 ./deploy.sh
@@ -67,7 +62,7 @@ open http://localhost:4567
 ## 📁 项目结构
 
 ```
-kk-guide/
+Knav/
 ├── app.rb                 # 主应用入口
 ├── config/               # 配置文件
 ├── lib/                  # 核心代码

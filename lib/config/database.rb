@@ -77,16 +77,16 @@ module Config
                    ['CI/CD', '持续集成和部署工具', 4]
 
         # Sample navigation links
-        db.execute 'INSERT INTO nav_links (title, url, description, category_id, icon, sort_order) VALUES (?, ?, ?, ?, ?, ?)',
-                   ['Prometheus', 'http://prometheus.example.com', '监控数据收集和存储', 1, '📊', 1]
-        db.execute 'INSERT INTO nav_links (title, url, description, category_id, icon, sort_order) VALUES (?, ?, ?, ?, ?, ?)',
-                   ['Grafana', 'http://grafana.example.com', '数据可视化仪表板', 1, '📈', 2]
-        db.execute 'INSERT INTO nav_links (title, url, description, category_id, icon, sort_order) VALUES (?, ?, ?, ?, ?, ?)',
-                   ['ELK Stack', 'http://elasticsearch.example.com', '日志搜索和分析', 2, '🔍', 1]
-        db.execute 'INSERT INTO nav_links (title, url, description, category_id, icon, sort_order) VALUES (?, ?, ?, ?, ?, ?)',
-                   ['Docker Registry', 'http://registry.example.com', '容器镜像仓库', 3, '🐳', 1]
-        db.execute 'INSERT INTO nav_links (title, url, description, category_id, icon, sort_order) VALUES (?, ?, ?, ?, ?, ?)',
-                   ['Jenkins', 'http://jenkins.example.com', '自动化构建和部署', 4, '🔧', 1]
+        db.execute 'INSERT INTO nav_links (title, url, description, category_id, icon, sort_order, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                   ['Prometheus', 'http://prometheus.example.com', '监控数据收集和存储', 1, '🌐', 1, 1]
+        db.execute 'INSERT INTO nav_links (title, url, description, category_id, icon, sort_order, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                   ['Grafana', 'http://grafana.example.com', '数据可视化仪表板', 1, '🌐', 2, 1]
+        db.execute 'INSERT INTO nav_links (title, url, description, category_id, icon, sort_order, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                   ['ELK Stack', 'http://elasticsearch.example.com', '日志搜索和分析', 2, '🌐', 1, 1]
+        db.execute 'INSERT INTO nav_links (title, url, description, category_id, icon, sort_order, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                   ['Docker Registry', 'http://registry.example.com', '容器镜像仓库', 3, '🌐', 1, 1]
+        db.execute 'INSERT INTO nav_links (title, url, description, category_id, icon, sort_order, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                   ['Jenkins', 'http://jenkins.example.com', '自动化构建和部署', 4, '🌐', 1, 1]
       end
 
       db.close

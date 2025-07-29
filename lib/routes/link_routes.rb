@@ -35,8 +35,9 @@ module Routes
         category_id = data['category_id'].to_i
         icon = data['icon']
         sort_order = data['sort_order'].to_i
-        is_active = data['is_active'] == true ? 1 : 0
-        result = Controllers::AdminController.create_link(title, url, description, category_id, icon, sort_order, is_active)
+        is_active = data['is_active'] == 1 ? 1 : 0
+        result = Controllers::AdminController.create_link(title, url, description, category_id, icon, sort_order,
+                                                          is_active)
         content_type :json
         result.to_json
       else
@@ -63,8 +64,9 @@ module Routes
       category_id = data['category_id'].to_i
       icon = data['icon']
       sort_order = data['sort_order'].to_i
-      is_active = data['is_active'] == true ? 1 : 0
-      result = Controllers::AdminController.update_link(id, title, url, description, category_id, icon, sort_order, is_active)
+              is_active = data['is_active'] == 1 ? 1 : 0
+      result = Controllers::AdminController.update_link(id, title, url, description, category_id, icon, sort_order,
+                                                        is_active)
       content_type :json
       result.to_json
     end
